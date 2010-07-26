@@ -105,8 +105,8 @@ def updatevalues():
 
 def printdata():
     print program, version
-    print "interface   |   RX bw / pkt       |      TX bw / pkt    | " + \
-        "total:   RX      TX "
+    print "interface   |   RX bw / pkgs      |      TX bw / pkgs   | " + \
+        "total:  RX       TX "
     
     for iface in device.keys():
         rx, tx, rxp, txp = delta[iface]
@@ -147,7 +147,7 @@ def main(argv=None):
   try:
     opts, args = getopt.getopt(sys.argv[1:], "hi:vc", ["help", "interval=", "version", "colours"])
   except getopt.GetoptError, err:
-    print >>sys.stderr, str(err)
+    print >> sys.stderr, str(err)
     print usage
     sys.exit(2)
   interval = sleep_seconds
@@ -161,7 +161,7 @@ def main(argv=None):
         interval = int(a)
       except:
         print usage
-        print >>sys.stderr, 'Invalid interval option.'
+        print >> sys.stderr, 'Invalid interval option.'
         sys.exit()
     elif o in ("-v", "--version"):
       print program, version
