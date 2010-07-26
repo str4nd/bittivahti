@@ -38,7 +38,6 @@ sleep_seconds = 1
 usage = """
 Usage: bittivahti [OPTIONS]
      -c,  --colours            Show something with colours
-     -d,  --dynamic            Use dynamic units (Default: Off)
      -h,  --help               Display this usage message
      -i,  --interval=SECONDS   Wait SECONDS between updates (Default: 3)
      -v,  --version            Show version information and exit
@@ -61,9 +60,9 @@ def pretty_unit(value, base=1000, minunit=None, format="%0.1f"):
     
     # Units based on base
     if base == 1000:
-        units = ['', 'k', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y']
+        units = [' ', 'k', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y']
     elif base == 1024:
-        units = ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi', 'Yi']
+        units = ['  ', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi', 'Yi']
     else:
         raise InvalidBaseException("The unit base has to be 1000 or 1024")
     
@@ -106,7 +105,7 @@ def updatevalues():
 
 def printdata():
     print program, version
-    print "interface   |  RX bw / pkt         |      TX bandwidth    | " + \
+    print "interface   |   RX bw / pkt       |      TX bw / pkt    | " + \
         "total:   RX      TX "
     
     for iface in device.keys():
@@ -116,10 +115,10 @@ def printdata():
              'rx' : pretty_unit(rx),
              'tx' : pretty_unit(tx),
              'rxp' : pretty_unit(rxp, minunit=1, format="%0.0f"),
-             'txp' : pretty_unit(txp),
+             'txp' : pretty_unit(txp, minunit=1, format="%0.0f"),
              'rx_t' : pretty_unit(rx_t),
              'tx_t' : pretty_unit(tx_t) }
-        print ("%(iface)-12s| %(rx)7sB/s %(rxp)7sp/s| %(tx)7sB/s %(txp)7sp/s|"+ \
+        print ("%(iface)-12s| %(rx)7sB/s %(rxp)6sp/s| %(tx)7sB/s %(txp)6sp/s|"+ \
             "   %(rx_t)7sB %(tx_t)7sB") % d
 
 def clear():
@@ -146,7 +145,7 @@ def main(argv=None):
   if argv is None:
     argv = sys.argv
   try:
-    opts, args = getopt.getopt(sys.argv[1:], "hi:dvc", ["help", "interval=", "dynamic", "version", "colours"])
+    opts, args = getopt.getopt(sys.argv[1:], "hi:vc", ["help", "interval=", "version", "colours"])
   except getopt.GetoptError, err:
     print >>sys.stderr, str(err)
     print usage
@@ -164,15 +163,13 @@ def main(argv=None):
         print usage
         print >>sys.stderr, 'Invalid interval option.'
         sys.exit()
-    elif o in ("-d", "--dynamic"):
-      dynunit = True
     elif o in ("-v", "--version"):
-      print program + ' v' + version
+      print program, version
       sys.exit()
     elif o in ("-c", "--colours"):
       colours = True
     else:
-      assert False, "epic fail: unhandled option"
+      raise Exception("epic fail: unhandled option")
   # Do that loop
   loop(interval, dynunit, colours)
 
