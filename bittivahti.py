@@ -1,31 +1,39 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-"""
-    Bittivahti – display bandwidth and packets on interfaces
-    Copyright (C) 2008  Henri Strand
+'''
+Copyright (c) 2008, 2010 Henri Strand, Joonas Kortesalmi
 
-    This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
 
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-"""
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.'''
 
-import time, readline, re, time, sys, getopt
+from __future__ import with_statement
 
-program = 'bittivahti-python'
-version = '0.01'
+import getopt
+import re
+import readline
+import sys
+import time
+
+program = 'bittivahti'
+version = '$id$'
 
 devfile = '/proc/net/dev'
-sleep_seconds = 3;
-regexp = re.compile(r"^\s*([a-z0-9]+):\s*(\d+)\s*(\d+)(\s+\d+){6}\s+(\d+)\s*(\d+)")
+sleep_seconds = 1
 
 usage = """
 Usage: bittivahti [OPTIONS]
@@ -37,124 +45,101 @@ Usage: bittivahti [OPTIONS]
 """
 
 device = {}
-device_new = {}
-device_total = {}
+delta = {}
+total = {}
 
-def calcb(value, dynunit):
-  if value < 1024 and dynunit == True:
-    byte = value
-    unit = 'B'
-  elif value < 1024*1024 or dynunit == False:
-    byte = value / 1024
-    unit = 'KiB'
-  elif value < 1024*1024*1024:
-    byte = value / 1024 / 1024
-    unit = 'MiB'
-  elif value < 1024*1024*1024*1024:
-    byte = value / 1024 / 1024 / 1024
-    unit = 'GiB'
-  else:
-    byte = value / 1024 / 1024 / 1024 / 1024
-    unit = 'TiB'
-  return [float(byte), unit]
+class InvalidBaseException(Exception):
+    pass
 
-def calcp(value, dynunit):
-  if value < 1000 or dynunit == False:
-    pack = value
-    unit = 'p'
-  elif value < 1000*1000:
-    pack = value / 1000
-    unit = 'kp'
-  elif value < 1000*1000*1000:
-    pack = value / 1000 / 1000
-    unit = 'Mp'
-  elif value < 1000*1000*1000*1000:
-    pack = value / 1000 / 1000 / 1000
-    unit = 'Gp'
-  else:
-    pack = value / 1000 / 1000 / 1000 / 1000
-    unit = 'Tp'
-  return [float(pack), unit]
+def pretty_unit(value, base=1000, minunit=None, format="%0.1f"):
+    ''' Finds the correct unit and returns a pretty string
+    
+    pretty_unit(4190591051, base=1024) = "3.9 Gi"
+    '''
+    if not minunit:
+        minunit = base
+    
+    # Units based on base
+    if base == 1000:
+        units = ['', 'k', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y']
+    elif base == 1024:
+        units = ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi', 'Yi']
+    else:
+        raise InvalidBaseException("The unit base has to be 1000 or 1024")
+    
+    # Divide until below threshold or base
+    v = float(value)
+    u = base
+    for unit in units:
+        if v >= base or u <= minunit:
+            v = v/base
+            u = u * base
+        else:
+            return format % v + " " + unit
 
-def updatevalues(sleep, dynunit, colours):
-  if colours == True:
-    bytecolours = '\033[32m'
-    packetcolours = '\033[33m'
-    coloursoff = '\033[0m'
-  else:
-    packetcolours = ''
-    bytecolours = ''
-    coloursoff = ''
-  f = open(devfile, 'r')
-  for line in f:
-    b = regexp.match(line)
-    if b is not None and b.group(2) is not '0' and b.group(5) is not '0':
-      rx = float(b.group(2))
-      tx = float(b.group(5))
-      rxp = float(b.group(3))
-      txp = float(b.group(6))
-      if device.has_key(b.group(1)):
+def updatevalues():
+    lines = None
+    # Read network traffic stats to memory quickly
+    with open(devfile, 'r') as f:
+        lines = f.readlines()[2:]
+    
+    for line in lines:
+        data = re.split('[ \t:]+', line.strip())
+        iface = data[0]
+        rx, rxp = map(long, data[1:3])
+        tx, txp = map(long, data[9:11])
+        trafficdata = [rx, tx, rxp, txp]
+        
+        if rx>0 or tx>0:
+            if device.has_key(iface):
+                delta[iface] = [b-a for a, b in zip(device[iface], trafficdata)]
+            else:
+                delta[iface] = [0L,0L,0L,0L]
+                total[iface] = [0L,0L,0L,0L]
+            device[iface] = trafficdata
+            
+            # Calculate total amount of traffic
+            if True in [a<0 for a in delta[iface]]:
+                pass # ignore updates where bytes or packets is negative
+            else:
+                total[iface] = [a+b for a, b in zip(total[iface], delta[iface])]
 
-        rx_delta = rx-device[b.group(1)][0]
-	tx_delta = tx-device[b.group(1)][1]
-	rxp_delta = rxp-device[b.group(1)][2]
-	txp_delta = txp-device[b.group(1)][3]
-
-        device[b.group(1)] = [rx, tx, rxp, txp]
-
-	if rx_delta > 0 and tx_delta > 0 and rxp_delta > 0 and txp_delta > 0:
-	  device_total[b.group(1)][0] += rx_delta
-	  device_total[b.group(1)][1] += tx_delta
-	  device_total[b.group(1)][2] += rxp_delta
-	  device_total[b.group(1)][3] += txp_delta
-
-        print bytecolours + "%12s |%9.1f %3s/s |%9.1f %3s/s | %10.1f %3s |%10.1f %3s\n" % (
-	  b.group(1),
-	  calcb(rx_delta / sleep, dynunit)[0],
-          calcb(rx_delta / sleep, dynunit)[1],
-	  calcb(tx_delta / sleep, dynunit)[0],
-	  calcb(tx_delta / sleep, dynunit)[1],
-	  calcb(device_total[b.group(1)][0], dynunit)[0],
-	  calcb(device_total[b.group(1)][0], dynunit)[1],
-	  calcb(device_total[b.group(1)][1], dynunit)[0],
-	  calcb(device_total[b.group(1)][1], dynunit)[1]
-	) + packetcolours + "             |%9.1f  %2s/s |%9.1f  %2s/s | %10.1f  %2s |%10.1f  %2s" % (
-	  calcp(rxp_delta / sleep, dynunit)[0],
-	  calcp(rxp_delta / sleep, dynunit)[1],
-	  calcp(txp_delta / sleep, dynunit)[0],
-	  calcp(txp_delta / sleep, dynunit)[1],
-	  calcp(device_total[b.group(1)][2], dynunit)[0],
-	  calcp(device_total[b.group(1)][2], dynunit)[1],
-	  calcp(device_total[b.group(1)][3], dynunit)[0],
-	  calcp(device_total[b.group(1)][3], dynunit)[1]
-	) + coloursoff
-      elif b.group(2) is not '0' and b.group(5) is not '0':
-	device[b.group(1)] = [rx, tx, rxp, txp]
-	device_new[b.group(1)] = [0, 0, 0, 0]
-	device_total[b.group(1)] = [0, 0, 0, 0]
-  f.close()
+def printdata():
+    print program, version
+    print "interface   |  RX bw / pkt         |      TX bandwidth    | " + \
+        "total:   RX      TX "
+    
+    for iface in device.keys():
+        rx, tx, rxp, txp = delta[iface]
+        rx_t, tx_t, rxp_t, txp_t = total[iface]
+        d = {'iface' : iface,
+             'rx' : pretty_unit(rx),
+             'tx' : pretty_unit(tx),
+             'rxp' : pretty_unit(rxp, minunit=1, format="%0.0f"),
+             'txp' : pretty_unit(txp),
+             'rx_t' : pretty_unit(rx_t),
+             'tx_t' : pretty_unit(tx_t) }
+        print ("%(iface)-12s| %(rx)7sB/s %(rxp)7sp/s| %(tx)7sB/s %(txp)7sp/s|"+ \
+            "   %(rx_t)7sB %(tx_t)7sB") % d
 
 def clear():
   sys.stdout.write("\x1b[H\x1b[2J")
 
 def loop(sleep, dynunit, colours):
-  print 'Please wait. The display is updated every %.0f seconds.' % sleep
-  print 'Starting up...'
-  updatevalues(sleep, dynunit, colours)
-  time.sleep(sleep)
-  # Main loop
-  while True:
-    try:
-      clear()
-      print program + ' ' + version
-      print "%12s |  %s  |  %s  |    %s  |   %s" % (
-            "interface", "RX bandwidth", "TX bandwidth",
-            "RX traffic", "TX traffic")
-      updatevalues(sleep, dynunit, colours)
-      time.sleep(sleep)
-    except KeyboardInterrupt:
-      print '\n\nBye!'
-      sys.exit()
+    print 'Please wait. The display is updated every %.0f seconds.' % sleep
+    print 'Starting up...'
+    updatevalues()
+    time.sleep(sleep)
+    # Main loop
+    while True:
+        try:
+            clear()
+            updatevalues()
+            printdata()
+            time.sleep(sleep)
+        except KeyboardInterrupt:
+            print '\n\nBye!'
+            sys.exit()
 
 def main(argv=None):
   colours = False
@@ -178,7 +163,7 @@ def main(argv=None):
       except:
         print usage
         print >>sys.stderr, 'Invalid interval option.'
-	sys.exit()
+        sys.exit()
     elif o in ("-d", "--dynamic"):
       dynunit = True
     elif o in ("-v", "--version"):
